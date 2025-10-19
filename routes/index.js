@@ -1,5 +1,6 @@
 const express = require('express');
 const quizRoutes = require('./quizRoutes');
+const authRoutes = require('./authRoutes');
 
 const router = express.Router();
 
@@ -17,6 +18,9 @@ router.get('/health', (req, res) => {
     version: '1.0.0'
   });
 });
+
+// Authentication routes
+router.use('/auth', authRoutes);
 
 // Quiz routes
 router.use('/quizzes', quizRoutes);

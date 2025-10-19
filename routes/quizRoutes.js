@@ -2,6 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const quizController = require('../controllers/quizController');
 const validateRequest = require('../middleware/validateRequest');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -76,9 +77,9 @@ const getQuizzesValidation = [
 /**
  * @route   POST /api/quizzes
  * @desc    Create a new quiz
- * @access  Public (no authentication required yet)
+ * @access  Private (authentication required)
  */
-router.post('/', createQuizValidation, validateRequest, quizController.createQuiz);
+router.post('/', authenticateToken, createQuizValidation, validateRequest, quizController.createQuiz);
 
 /**
  * @route   GET /api/quizzes

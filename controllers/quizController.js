@@ -21,8 +21,12 @@ class QuizController {
         });
       }
 
-      // Create the quiz
-      const quiz = await quizService.createQuiz(req.body);
+      // Create the quiz with creator info
+      const quizData = {
+        ...req.body,
+        creator: req.user.userId
+      };
+      const quiz = await quizService.createQuiz(quizData);
 
       res.status(201).json({
         success: true,

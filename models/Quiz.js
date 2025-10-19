@@ -12,6 +12,11 @@ const quizSchema = new mongoose.Schema({
     trim: true,
     maxlength: [200, 'Quiz title cannot exceed 200 characters']
   },
+  creator: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'Creator is required']
+  },
   authorName: {
     type: String,
     trim: true,

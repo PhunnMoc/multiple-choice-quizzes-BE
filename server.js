@@ -9,6 +9,7 @@ const database = require('./config/database');
 const apiRoutes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/notFound');
+const socketService = require('./services/socketService');
 
 /**
  * Express Application Setup
@@ -83,12 +84,19 @@ class Server {
     // API routes
     this.app.use('/api', apiRoutes);
 
-    // Future WebSocket endpoint placeholder
+    // WebSocket endpoint info
     this.app.get('/ws', (req, res) => {
       res.json({
         success: true,
-        message: 'WebSocket endpoint - Coming soon!',
-        note: 'This will be used for real-time multiplayer quiz sessions'
+        message: 'WebSocket endpoint is active!',
+        note: 'Connect to this server using Socket.io client for real-time quiz sessions',
+        events: {
+          'create-room': 'Create a new quiz room (requires auth)',
+          'join-room': 'Join an existing room',
+          'start-quiz': 'Start the quiz (host only)',
+          'submit-answer': 'Submit an answer for current question',
+          'next-quiz': 'Advance to next question (host only)'
+        }
       });
     });
   }
@@ -122,15 +130,27 @@ class Server {
         console.log(`🗄️  Database: ${database.getStatus().isConnected ? 'Connected' : 'Disconnected'}`);
         console.log('=====================================\n');
         
+        // Initialize Socket.io
+        socketService.initialize(this.server);
+        
         // Log available endpoints
         console.log('📋 Available Endpoints:');
         console.log('  GET  /                    - API information');
         console.log('  GET  /api/health          - Health check');
-        console.log('  POST /api/quizzes         - Create quiz');
+        console.log('  POST /api/auth/signup     - User registration');
+        console.log('  POST /api/auth/login      - User login');
+        console.log('  GET  /api/auth/me         - Get user profile');
+        console.log('  POST /api/quizzes         - Create quiz (auth required)');
         console.log('  GET  /api/quizzes         - List all quizzes');
         console.log('  GET  /api/quizzes/:id     - Get quiz by ID');
         console.log('  GET  /api/quizzes/:id/answers - Get quiz with answers');
-        console.log('  GET  /ws                  - WebSocket info (future)\n');
+        console.log('  GET  /ws                  - WebSocket info');
+        console.log('\n🔌 Socket.io Events:');
+        console.log('  create-room               - Create quiz room (auth required)');
+        console.log('  join-room                 - Join existing room');
+        console.log('  start-quiz                - Start quiz (host only)');
+        console.log('  submit-answer             - Submit answer');
+        console.log('  next-quiz                 - Next question (host only)\n');
       });
 
       // Handle server errors
