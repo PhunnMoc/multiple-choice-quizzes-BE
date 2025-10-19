@@ -120,16 +120,20 @@ class SocketService {
           // Store room code in socket for cleanup
           socket.roomCode = roomCode;
 
+          const participant = room.participants.get(socket.id);
           socket.emit('room-joined', {
             roomCode,
             message: 'Successfully joined room',
             quizTitle: room.quizData.title,
-            participantCount: room.participants.size
+            participantCount: room.participants.size,
+            playerId: participant.playerId,
+            gameSessionId: room.gameSessionId
           });
 
           // Notify other participants
           socket.to(roomCode).emit('participant-joined', {
             name,
+            playerId: participant.playerId,
             participantCount: room.participants.size
           });
 
@@ -155,10 +159,15 @@ class SocketService {
           const room = roomService.startQuiz(roomCode, socket.user.id);
           const question = roomService.getCurrentQuestion(roomCode);
 
+          // Get initial leaderboard
+          const leaderboard = roomService.getLeaderboard(roomCode);
+
           // Broadcast to all participants in the room
           this.io.to(roomCode).emit('quiz-started', {
             question,
-            participantCount: room.participants.size
+            participantCount: room.participants.size,
+            gameSessionId: room.gameSessionId,
+            leaderboard
           });
 
           console.log(`Quiz started in room ${roomCode} by ${socket.user.name}`);
@@ -171,21 +180,27 @@ class SocketService {
       // Submit answer event
       socket.on('submit-answer', async (data) => {
         try {
-          const { roomCode, answer } = data;
+          const { roomCode, answer, clientTimeTaken } = data;
           
           if (!roomCode || answer === undefined) {
             return socket.emit('error', { message: 'Room code and answer are required' });
           }
 
-          const result = roomService.submitAnswer(roomCode, socket.id, answer);
+          const result = roomService.submitAnswer(roomCode, socket.id, answer, clientTimeTaken);
           const room = roomService.getRoom(roomCode);
           const participant = room.participants.get(socket.id);
 
           socket.emit('answer-submitted', {
             isCorrect: result.isCorrect,
             timeSpent: result.timeSpent,
-            currentScore: participant.score
+            serverTimeSpent: result.serverTimeSpent,
+            currentScore: result.currentScore,
+            playerId: result.playerId
           });
+
+          // Broadcast updated leaderboard to all participants
+          const leaderboard = roomService.getLeaderboard(roomCode);
+          this.io.to(roomCode).emit('leaderboard-updated', leaderboard);
 
           // Check if all participants have answered
           const allAnswered = Array.from(room.participants.values())
@@ -220,6 +235,27 @@ class SocketService {
           this.advanceToNextQuestion(roomCode, socket.user.id);
         } catch (error) {
           console.error('Error advancing question:', error);
+          socket.emit('error', { message: error.message });
+        }
+      });
+
+      // Get leaderboard event
+      socket.on('get-leaderboard', async (data) => {
+        try {
+          const { roomCode, currentQuestionOnly = false } = data;
+          
+          if (!roomCode) {
+            return socket.emit('error', { message: 'Room code is required' });
+          }
+
+          const leaderboard = roomService.getLeaderboard(roomCode, currentQuestionOnly);
+          if (!leaderboard) {
+            return socket.emit('error', { message: 'Room not found' });
+          }
+
+          socket.emit('leaderboard-data', leaderboard);
+        } catch (error) {
+          console.error('Error getting leaderboard:', error);
           socket.emit('error', { message: error.message });
         }
       });
@@ -279,10 +315,12 @@ class SocketService {
       } else {
         // Next question
         const question = roomService.getCurrentQuestion(roomCode);
+        const leaderboard = roomService.getLeaderboard(roomCode);
         
         this.io.to(roomCode).emit('next-question', {
           question,
-          participantCount: room.participants.size
+          participantCount: room.participants.size,
+          leaderboard
         });
 
         console.log(`Advanced to question ${result.currentQuestion + 1} in room ${roomCode}`);

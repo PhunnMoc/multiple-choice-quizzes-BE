@@ -95,7 +95,8 @@ class Server {
           'join-room': 'Join an existing room',
           'start-quiz': 'Start the quiz (host only)',
           'submit-answer': 'Submit an answer for current question',
-          'next-quiz': 'Advance to next question (host only)'
+          'next-quiz': 'Advance to next question (host only)',
+          'get-leaderboard': 'Get current leaderboard'
         }
       });
     });
@@ -150,7 +151,8 @@ class Server {
         console.log('  join-room                 - Join existing room');
         console.log('  start-quiz                - Start quiz (host only)');
         console.log('  submit-answer             - Submit answer');
-        console.log('  next-quiz                 - Next question (host only)\n');
+        console.log('  next-quiz                 - Next question (host only)');
+        console.log('  get-leaderboard           - Get current leaderboard\n');
       });
 
       // Handle server errors

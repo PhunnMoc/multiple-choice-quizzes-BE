@@ -35,6 +35,19 @@ class RoomService {
   }
 
   /**
+   * Generate a unique player ID
+   * @returns {string} Unique player ID
+   */
+  generatePlayerId() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 8; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  /**
    * Create a new room
    * @param {string} quizId - Quiz ID
    * @param {string} hostId - Host user ID
@@ -53,13 +66,16 @@ class RoomService {
       const room = {
         quizId,
         hostId,
-        participants: new Map(), // socketId => { name, answers: [], score: 0 }
+        participants: new Map(), // socketId => { playerId, name, answers: [], score: 0, isReady: false }
         currentQuestion: 0,
         quizData: quiz,
         isActive: false,
         isCompleted: false,
         startTime: null,
-        questionStartTime: null
+        questionStartTime: null,
+        gameSessionId: this.generatePlayerId(), // Unique game session ID
+        maxParticipants: 50,
+        questionDuration: 30000 // 30 seconds per question
       };
 
       this.rooms.set(roomCode, room);
@@ -89,20 +105,30 @@ class RoomService {
       throw new Error('Quiz has already ended');
     }
 
+    // Check room capacity
+    if (room.participants.size >= room.maxParticipants) {
+      throw new Error('Room is full');
+    }
+
     // Check if user already in room
     if (room.participants.has(socketId)) {
       throw new Error('Already joined this room');
     }
 
+    // Generate unique player ID
+    const playerId = this.generatePlayerId();
+
     // Add participant
     room.participants.set(socketId, {
+      playerId,
       name,
       answers: [],
       score: 0,
-      joinedAt: new Date()
+      joinedAt: new Date(),
+      isReady: false
     });
 
-    console.log(`User ${name} joined room ${roomCode}`);
+    console.log(`User ${name} (Player ID: ${playerId}) joined room ${roomCode}`);
     return room;
   }
 
@@ -146,6 +172,10 @@ class RoomService {
       throw new Error('Quiz is already active');
     }
 
+    if (room.participants.size === 0) {
+      throw new Error('Cannot start quiz with no participants');
+    }
+
     room.isActive = true;
     room.startTime = new Date();
     room.currentQuestion = 0;
@@ -154,7 +184,7 @@ class RoomService {
     // Start timer for first question
     this.startQuestionTimer(roomCode);
 
-    console.log(`Quiz started in room ${roomCode}`);
+    console.log(`Quiz started in room ${roomCode} with ${room.participants.size} participants`);
     return room;
   }
 
@@ -163,8 +193,9 @@ class RoomService {
    * @param {string} roomCode - Room code
    * @param {string} socketId - Socket ID
    * @param {number} answer - Answer index (0-3)
+   * @param {number} clientTimeTaken - Client-side time taken (optional, for validation)
    */
-  submitAnswer(roomCode, socketId, answer) {
+  submitAnswer(roomCode, socketId, answer, clientTimeTaken = null) {
     const room = this.rooms.get(roomCode);
     if (!room) {
       throw new Error('Room not found');
@@ -187,14 +218,25 @@ class RoomService {
 
     const question = room.quizData.questions[room.currentQuestion];
     const isCorrect = answer === question.correctAnswerIndex;
-    const timeSpent = Date.now() - room.questionStartTime.getTime();
+    
+    // Server-authoritative timing (use server timestamp)
+    const serverTimeSpent = Date.now() - room.questionStartTime.getTime();
+    
+    // Validate client time if provided (should be within reasonable range)
+    let timeSpent = serverTimeSpent;
+    if (clientTimeTaken && Math.abs(clientTimeTaken - serverTimeSpent) < 5000) {
+      // If client time is within 5 seconds of server time, use it for better UX
+      timeSpent = clientTimeTaken;
+    }
 
-    // Add answer
+    // Add answer with server timestamp
     participant.answers.push({
       questionIndex: room.currentQuestion,
       answer,
       isCorrect,
-      timeSpent
+      timeSpent,
+      serverTimeSpent,
+      submittedAt: new Date()
     });
 
     // Update score
@@ -202,8 +244,14 @@ class RoomService {
       participant.score++;
     }
 
-    console.log(`Answer submitted in room ${roomCode}: ${answer} (${isCorrect ? 'correct' : 'incorrect'})`);
-    return { isCorrect, timeSpent };
+    console.log(`Answer submitted in room ${roomCode} by ${participant.name}: ${answer} (${isCorrect ? 'correct' : 'incorrect'}) in ${timeSpent}ms`);
+    return { 
+      isCorrect, 
+      timeSpent, 
+      serverTimeSpent,
+      currentScore: participant.score,
+      playerId: participant.playerId
+    };
   }
 
   /**
@@ -258,7 +306,7 @@ class RoomService {
       console.log(`Time up for question ${room.currentQuestion + 1} in room ${roomCode}`);
       // Auto-advance to next question
       this.nextQuestion(roomCode, room.hostId);
-    }, 30000); // 30 seconds
+    }, room.questionDuration);
 
     this.timers.set(roomCode, timer);
   }
@@ -298,7 +346,10 @@ class RoomService {
       questionIndex: room.currentQuestion,
       questionText: question.questionText,
       options: question.options,
-      timeRemaining: this.getTimeRemaining(roomCode)
+      timeRemaining: this.getTimeRemaining(roomCode),
+      startAt: room.questionStartTime.getTime(), // Client-side timer start timestamp
+      duration: room.questionDuration,
+      totalQuestions: room.quizData.questions.length
     };
   }
 
@@ -312,7 +363,43 @@ class RoomService {
     if (!room || !room.questionStartTime) return 0;
 
     const elapsed = Date.now() - room.questionStartTime.getTime();
-    return Math.max(0, 30000 - elapsed); // 30 seconds
+    return Math.max(0, room.questionDuration - elapsed);
+  }
+
+  /**
+   * Get leaderboard for current question or overall
+   * @param {string} roomCode - Room code
+   * @param {boolean} currentQuestionOnly - If true, only show scores for current question
+   * @returns {object} Leaderboard data
+   */
+  getLeaderboard(roomCode, currentQuestionOnly = false) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return null;
+
+    const participants = Array.from(room.participants.values())
+      .map(p => {
+        let score = p.score;
+        if (currentQuestionOnly) {
+          // Count correct answers for current question only
+          score = p.answers.filter(a => a.questionIndex === room.currentQuestion && a.isCorrect).length;
+        }
+        
+        return {
+          playerId: p.playerId,
+          name: p.name,
+          score,
+          totalQuestions: currentQuestionOnly ? 1 : room.quizData.questions.length,
+          isReady: p.isReady || false
+        };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return {
+      questionIndex: currentQuestionOnly ? room.currentQuestion : null,
+      participants,
+      totalParticipants: participants.length,
+      timestamp: new Date()
+    };
   }
 
   /**
@@ -326,6 +413,7 @@ class RoomService {
 
     const participants = Array.from(room.participants.values())
       .map(p => ({
+        playerId: p.playerId,
         name: p.name,
         score: p.score,
         totalQuestions: room.quizData.questions.length,
@@ -334,6 +422,7 @@ class RoomService {
       .sort((a, b) => b.score - a.score);
 
     return {
+      gameSessionId: room.gameSessionId,
       quizTitle: room.quizData.title,
       totalQuestions: room.quizData.questions.length,
       participants,
