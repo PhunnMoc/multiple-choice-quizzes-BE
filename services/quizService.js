@@ -41,11 +41,12 @@ class QuizService {
   }
 
   /**
-   * Get all quizzes with optional pagination
+   * Get all quizzes created by a specific user with optional pagination
+   * @param {string} creatorId - ID of the quiz creator
    * @param {Object} options - Query options (page, limit, sortBy)
    * @returns {Promise<Object>} Object containing quizzes and pagination info
    */
-  async getAllQuizzes(options = {}) {
+  async getAllQuizzes(creatorId, options = {}) {
     try {
       const {
         page = 1,
@@ -57,13 +58,15 @@ class QuizService {
       const skip = (page - 1) * limit;
       const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
 
+      const query = { creator: creatorId };
+
       const [quizzes, total] = await Promise.all([
-        Quiz.find()
+        Quiz.find(query)
           .sort(sort)
           .skip(skip)
           .limit(parseInt(limit))
           .select('-__v'), // Exclude version field
-        Quiz.countDocuments()
+        Quiz.countDocuments(query)
       ]);
 
       return {
@@ -82,12 +85,13 @@ class QuizService {
   }
 
   /**
-   * Search quizzes by title or author name
+   * Search quizzes by title or author name for a specific creator
    * @param {string} searchTerm - Search term
+   * @param {string} creatorId - ID of the quiz creator
    * @param {Object} options - Query options
    * @returns {Promise<Object>} Search results with pagination
    */
-  async searchQuizzes(searchTerm, options = {}) {
+  async searchQuizzes(searchTerm, creatorId, options = {}) {
     try {
       const {
         page = 1,
@@ -100,6 +104,7 @@ class QuizService {
       const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
 
       const searchQuery = {
+        creator: creatorId,
         $or: [
           { title: { $regex: searchTerm, $options: 'i' } },
           { authorName: { $regex: searchTerm, $options: 'i' } }

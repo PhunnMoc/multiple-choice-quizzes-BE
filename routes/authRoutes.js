@@ -2,6 +2,7 @@ const express = require('express');
 const { body } = require('express-validator');
 const authController = require('../controllers/authController');
 const validateRequest = require('../middleware/validateRequest');
+const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -62,6 +63,6 @@ router.post('/login', loginValidation, validateRequest, authController.login);
  * @desc    Get current user profile
  * @access  Private
  */
-router.get('/me', authController.getProfile);
+router.get('/me', authenticateToken, authController.getProfile);
 
 module.exports = router;

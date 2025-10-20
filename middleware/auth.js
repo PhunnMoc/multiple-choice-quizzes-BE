@@ -11,6 +11,9 @@ const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
+    console.log('Auth middleware - Token:', token ? 'Present' : 'Missing');
+    console.log('Auth middleware - JWT_SECRET:', process.env.JWT_SECRET ? 'Present' : 'Missing');
+
     if (!token) {
       return res.status(401).json({
         success: false,
@@ -20,6 +23,7 @@ const authenticateToken = async (req, res, next) => {
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log('Auth middleware - Decoded token:', decoded);
     
     // Check if user still exists
     const user = await User.findById(decoded.userId);
@@ -30,6 +34,8 @@ const authenticateToken = async (req, res, next) => {
       });
     }
 
+    console.log('Auth middleware - User found:', user._id);
+
     // Add user info to request
     req.user = {
       userId: user._id,
@@ -37,6 +43,7 @@ const authenticateToken = async (req, res, next) => {
       name: user.name
     };
 
+    console.log('Auth middleware - req.user set:', req.user);
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);
@@ -57,7 +64,8 @@ const authenticateToken = async (req, res, next) => {
 
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };

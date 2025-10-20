@@ -114,7 +114,7 @@ class QuizController {
   }
 
   /**
-   * Get all quizzes with optional pagination and search
+   * Get all quizzes created by the authenticated user with optional pagination and search
    * GET /api/quizzes
    */
   async getAllQuizzes(req, res) {
@@ -127,18 +127,19 @@ class QuizController {
         search
       } = req.query;
 
+      const userId = req.user.userId; // Get user ID from authenticated token
       let result;
 
       // If search term is provided, perform search
       if (search && search.trim()) {
-        result = await quizService.searchQuizzes(search.trim(), {
+        result = await quizService.searchQuizzes(search.trim(), userId, {
           page: parseInt(page),
           limit: parseInt(limit),
           sortBy,
           sortOrder
         });
       } else {
-        result = await quizService.getAllQuizzes({
+        result = await quizService.getAllQuizzes(userId, {
           page: parseInt(page),
           limit: parseInt(limit),
           sortBy,
@@ -158,7 +159,7 @@ class QuizController {
 
       res.status(200).json({
         success: true,
-        message: search ? 'Search results retrieved successfully' : 'Quizzes retrieved successfully',
+        message: search ? 'Search results retrieved successfully' : 'Your quizzes retrieved successfully',
         data: {
           quizzes: formattedQuizzes,
           pagination: result.pagination,

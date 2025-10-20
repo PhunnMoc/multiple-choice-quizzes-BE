@@ -83,11 +83,11 @@ router.post('/', authenticateToken, createQuizValidation, validateRequest, quizC
 
 /**
  * @route   GET /api/quizzes
- * @desc    Get all quizzes with optional pagination and search
- * @access  Public
+ * @desc    Get all quizzes created by the authenticated user with optional pagination and search
+ * @access  Private (authentication required)
  * @query   page, limit, sortBy, sortOrder, search
  */
-router.get('/', getQuizzesValidation, validateRequest, quizController.getAllQuizzes);
+router.get('/', authenticateToken, getQuizzesValidation, validateRequest, quizController.getAllQuizzes);
 
 /**
  * @route   GET /api/quizzes/:id
