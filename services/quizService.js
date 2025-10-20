@@ -21,6 +21,33 @@ class QuizService {
   }
 
   /**
+   * Update an existing quiz
+   * @param {string} quizId - Quiz ID
+   * @param {Object} updateData - Data to update (excludes id and creator)
+   * @returns {Promise<Object>} Updated quiz object
+   */
+  async updateQuiz(quizId, updateData) {
+    try {
+      const updatedQuiz = await Quiz.findByIdAndUpdate(
+        quizId,
+        updateData,
+        { new: true, runValidators: true }
+      );
+      
+      if (!updatedQuiz) {
+        throw new Error('Quiz not found');
+      }
+      
+      return updatedQuiz;
+    } catch (error) {
+      if (error.name === 'CastError') {
+        throw new Error('Invalid quiz ID format');
+      }
+      throw new Error(`Failed to update quiz: ${error.message}`);
+    }
+  }
+
+  /**
    * Get a quiz by ID
    * @param {string} quizId - Quiz ID
    * @returns {Promise<Object>} Quiz object

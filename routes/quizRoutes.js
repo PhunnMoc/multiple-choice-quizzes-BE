@@ -90,17 +90,26 @@ router.post('/', authenticateToken, createQuizValidation, validateRequest, quizC
 router.get('/', authenticateToken, getQuizzesValidation, validateRequest, quizController.getAllQuizzes);
 
 /**
- * @route   GET /api/quizzes/:id
- * @desc    Get a specific quiz by ID (without answers)
- * @access  Public
- */
-router.get('/:id', quizController.getQuizById);
-
-/**
  * @route   GET /api/quizzes/:id/answers
  * @desc    Get a specific quiz by ID with correct answers
  * @access  Public (in a real app, this might require authentication)
  */
 router.get('/:id/answers', quizController.getQuizWithAnswers);
+
+/**
+ * @route   PUT /api/quizzes/:id
+ * @desc    Update an existing quiz (except id and creator)
+ * @access  Private (authentication required)
+ */
+console.log('Registering PUT /:id route');
+router.put('/:id', authenticateToken, createQuizValidation, validateRequest, quizController.updateQuiz);
+console.log('PUT /:id route registered successfully');
+
+/**
+ * @route   GET /api/quizzes/:id
+ * @desc    Get a specific quiz by ID (without answers)
+ * @access  Public
+ */
+router.get('/:id', quizController.getQuizById);
 
 module.exports = router;
