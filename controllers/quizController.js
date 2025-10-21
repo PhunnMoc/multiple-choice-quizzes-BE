@@ -79,7 +79,12 @@ class QuizController {
 
       // Check if quiz exists and belongs to the user
       const existingQuiz = await quizService.getQuizById(id);
-      if (existingQuiz.creator.toString() !== userId) {
+      
+      // Convert both to strings for comparison
+      const creatorId = existingQuiz.creator.toString();
+      const userIdStr = userId.toString();
+      
+      if (creatorId !== userIdStr) {
         return res.status(403).json({
           success: false,
           message: 'You can only update your own quizzes'
@@ -321,96 +326,6 @@ class QuizController {
     }
   }
 
-  /**
-   * Update an existing quiz
-   * PUT /api/quizzes/:id
-   */
-  async updateQuiz(req, res) {
-    try {
-      const { id } = req.params;
-      const userId = req.user.userId;
-
-      if (!id) {
-        return res.status(400).json({
-          success: false,
-          message: 'Quiz ID is required'
-        });
-      }
-
-      // Validate input data
-      const validationResult = quizService.validateQuizData(req.body);
-      if (!validationResult.isValid) {
-        return res.status(400).json({
-          success: false,
-          message: 'Validation failed',
-          errors: validationResult.errors
-        });
-      }
-
-      // Check if quiz exists and user owns it
-      const existingQuiz = await quizService.getQuizById(id);
-      if (!existingQuiz) {
-        return res.status(404).json({
-          success: false,
-          message: 'Quiz not found'
-        });
-      }
-
-      if (existingQuiz.creator.toString() !== userId) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only update your own quizzes'
-        });
-      }
-
-      // Prepare update data (exclude id and creator)
-      const updateData = {
-        title: req.body.title,
-        authorName: req.body.authorName,
-        questions: req.body.questions,
-        updatedAt: new Date()
-      };
-
-      const updatedQuiz = await quizService.updateQuiz(id, updateData);
-
-      res.status(200).json({
-        success: true,
-        message: 'Quiz updated successfully',
-        data: {
-          quiz: {
-            id: updatedQuiz._id,
-            title: updatedQuiz.title,
-            authorName: updatedQuiz.authorName,
-            questionsCount: updatedQuiz.questions.length,
-            createdAt: updatedQuiz.createdAt,
-            updatedAt: updatedQuiz.updatedAt
-          }
-        }
-      });
-    } catch (error) {
-      console.error('Error updating quiz:', error);
-      
-      if (error.message === 'Quiz not found') {
-        return res.status(404).json({
-          success: false,
-          message: 'Quiz not found'
-        });
-      }
-
-      if (error.message === 'Invalid quiz ID format') {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid quiz ID format'
-        });
-      }
-
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error',
-        error: error.message
-      });
-    }
-  }
 }
 
 module.exports = new QuizController();
