@@ -1,4 +1,5 @@
 const Quiz = require('../models/Quiz');
+const QuizHistory = require('../models/QuizHistory');
 
 /**
  * Do Quiz Service
@@ -124,6 +125,9 @@ class DoQuizService {
     // Clear current timer
     this.clearQuestionTimer(roomCode);
 
+    // Save "no answer" for participants who didn't submit
+    this.saveNoAnswerForCurrentQuestion(roomCode);
+
     // Move to next question
     quizSession.currentQuestionIndex++;
 
@@ -132,12 +136,10 @@ class DoQuizService {
       const finalResults = this.endQuiz(roomCode);
       
       if (io) {
-        console.log(`🎉 Emitting quiz-completed event to room ${roomCode} with ${finalResults.participants.length} participants`);
         io.to(roomCode).emit('quiz-completed', {
           results: finalResults,
           message: 'Quiz completed successfully'
         });
-        console.log(`🎉 Quiz-completed event emitted successfully`);
       }
       
       return null;
@@ -224,13 +226,30 @@ class DoQuizService {
     }
 
     const currentQuestion = quizSession.questions[quizSession.currentQuestionIndex];
+    
+    console.log(`📝 SubmitAnswer called for ${participant.name}:`, {
+      roomCode: roomCode,
+      participantId: participantId,
+      currentQuestionIndex: quizSession.currentQuestionIndex,
+      answerIndex: answerIndex,
+      questionText: currentQuestion.questionText,
+      correctAnswerIndex: currentQuestion.correctAnswerIndex
+    });
     if (!currentQuestion) {
       throw new Error('No active question');
     }
 
     // Check if already answered this question
-    const participantAnswers = quizSession.results.answers.get(participantId) || [];
+    const participantAnswers = quizSession.results.answers.get(participant.playerId) || [];
     const existingAnswer = participantAnswers.find(a => a.questionIndex === quizSession.currentQuestionIndex);
+    
+    console.log(`🔍 Checking existing answers for ${participant.name}:`, {
+      participantId: participantId,
+      playerId: participant.playerId,
+      currentQuestionIndex: quizSession.currentQuestionIndex,
+      existingAnswers: participantAnswers.map(a => ({ q: a.questionIndex, a: a.answerIndex })),
+      hasExistingAnswer: !!existingAnswer
+    });
     
     if (existingAnswer) {
       throw new Error('Already answered this question');
@@ -242,27 +261,10 @@ class DoQuizService {
     // Check if answer is correct
     const isCorrect = answerIndex === currentQuestion.correctAnswerIndex;
     
-    console.log(`🔍 Answer check for room ${roomCode}:`, {
-      participantName: participant.name,
-      answerIndex: answerIndex,
-      correctAnswerIndex: currentQuestion.correctAnswerIndex,
-      isCorrect: isCorrect,
-      questionText: currentQuestion.questionText
-    });
-    
     // Update score
     const currentScore = quizSession.results.scores.get(participant.playerId) || 0;
     const newScore = isCorrect ? currentScore + 1 : currentScore;
     quizSession.results.scores.set(participant.playerId, newScore);
-    
-    console.log(`📊 Score updated for ${participant.name}:`, {
-      participantId: participantId,
-      playerId: participant.playerId,
-      currentScore: currentScore,
-      newScore: newScore,
-      isCorrect: isCorrect,
-      scoresMap: Array.from(quizSession.results.scores.entries())
-    });
 
     // Store answer
     const answerData = {
@@ -276,7 +278,13 @@ class DoQuizService {
     participantAnswers.push(answerData);
     quizSession.results.answers.set(participant.playerId, participantAnswers);
 
-    console.log(`✅ Answer submitted by ${participant.name} in room ${roomCode}: ${answerIndex} (${isCorrect ? 'correct' : 'incorrect'}) in ${timeSpent}ms`);
+    console.log(`📝 Stored answer for ${participant.name}:`, {
+      questionIndex: quizSession.currentQuestionIndex,
+      answerIndex: answerIndex,
+      isCorrect: isCorrect,
+      totalAnswers: participantAnswers.length,
+      allAnswers: participantAnswers.map(a => ({ q: a.questionIndex, a: a.answerIndex, c: a.isCorrect }))
+    });
 
     return {
       isCorrect: isCorrect,
@@ -353,11 +361,11 @@ class DoQuizService {
       const score = quizSession.results.scores.get(participant.playerId) || 0;
       const answers = quizSession.results.answers.get(participant.playerId) || [];
       
-      console.log(`📊 Final score for ${participant.name}:`, {
+      console.log(`📊 Final results for ${participant.name}:`, {
         playerId: participant.playerId,
         score: score,
-        answers: answers.length,
-        totalQuestions: quizSession.totalQuestions
+        answersCount: answers.length,
+        answers: answers.map(a => ({ q: a.questionIndex, a: a.answerIndex, c: a.isCorrect }))
       });
       
       return {
@@ -374,16 +382,88 @@ class DoQuizService {
       quizTitle: quizSession.quizTitle,
       totalQuestions: quizSession.totalQuestions,
       participants: participants,
+      questions: quizSession.questions, // Add questions data
       completionTime: quizSession.results.completionTime,
       duration: Date.now() - quizSession.startTime.getTime()
     };
 
-    console.log(`🏁 Quiz completed for room ${roomCode}. Final results:`, finalResults);
+    // Save to history
+    this.saveQuizHistory(finalResults, quizSession);
 
     // Clean up
     this.activeQuizzes.delete(roomCode);
 
     return finalResults;
+  }
+
+  /**
+   * Save quiz results to history
+   * @param {object} finalResults - Final quiz results
+   * @param {object} quizSession - Quiz session data
+   */
+  async saveQuizHistory(finalResults, quizSession) {
+    try {
+      // Find host (first participant)
+      const hostParticipant = Array.from(quizSession.participants.values())[0];
+      
+      const historyData = {
+        roomCode: finalResults.roomCode,
+        quizId: quizSession.quizId,
+        quizTitle: finalResults.quizTitle,
+        hostId: hostParticipant.playerId,
+        hostName: hostParticipant.name,
+        participants: finalResults.participants,
+        questions: finalResults.questions,
+        completionTime: finalResults.completionTime,
+        duration: finalResults.duration
+      };
+
+      const history = new QuizHistory(historyData);
+      await history.save();
+      
+      console.log(`📚 Quiz history saved for room ${finalResults.roomCode}`);
+    } catch (error) {
+      console.error('Error saving quiz history:', error);
+    }
+  }
+
+  /**
+   * Save "no answer" for participants who didn't submit current question
+   * @param {string} roomCode - Room code
+   */
+  saveNoAnswerForCurrentQuestion(roomCode) {
+    const quizSession = this.activeQuizzes.get(roomCode);
+    if (!quizSession) return;
+
+    const currentQuestionIndex = quizSession.currentQuestionIndex;
+    const currentQuestion = quizSession.questions[currentQuestionIndex];
+    
+    console.log(`💾 Saving no-answer for question ${currentQuestionIndex + 1}:`, {
+      questionText: currentQuestion.questionText,
+      participantsCount: quizSession.participants.size
+    });
+
+    // Check each participant
+    for (const [participantId, participant] of quizSession.participants) {
+      const participantAnswers = quizSession.results.answers.get(participant.playerId) || [];
+      const existingAnswer = participantAnswers.find(a => a.questionIndex === currentQuestionIndex);
+      
+      if (!existingAnswer) {
+        // Save "no answer" for this participant
+        const noAnswerData = {
+          questionIndex: currentQuestionIndex,
+          answerIndex: -1, // -1 means no answer
+          isCorrect: false,
+          timeSpent: quizSession.questionDuration, // Full time spent
+          submittedAt: new Date()
+        };
+        
+        participantAnswers.push(noAnswerData);
+        quizSession.results.answers.set(participant.playerId, participantAnswers);
+        
+        console.log(`💾 Saved no-answer for ${participant.name} on question ${currentQuestionIndex + 1}`);
+      }
+    }
   }
 
   /**
