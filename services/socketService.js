@@ -234,19 +234,31 @@ class SocketService {
       });
 
       // Submit answer event
+      console.log('🔌 Registering submit-answer event listener for socket:', socket.id);
       socket.on('submit-answer', async (data) => {
         try {
+          console.log('📥 Submit-answer event received:', {
+            roomCode: data.roomCode,
+            answer: data.answer,
+            socketId: socket.id,
+            userName: socket.user?.name
+          });
+          
           const { roomCode, answer } = data;
           
           if (!roomCode || answer === undefined) {
+            console.log('📥 Submit-answer validation failed: missing roomCode or answer');
             return socket.emit('error', { message: 'Room code and answer are required' });
           }
 
           // Check if quiz is active
           if (!doQuizService.isQuizActive(roomCode)) {
+            console.log('📥 Submit-answer failed: quiz not active');
             return socket.emit('error', { message: 'Quiz is not active' });
           }
 
+          console.log('📥 Processing submit-answer for room:', roomCode);
+          
           // Submit answer using doQuizService
           const result = doQuizService.submitAnswer(roomCode, socket.id, answer);
           const leaderboard = doQuizService.getLeaderboard(roomCode);

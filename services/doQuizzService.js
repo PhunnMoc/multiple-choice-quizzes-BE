@@ -132,17 +132,19 @@ class DoQuizService {
       const finalResults = this.endQuiz(roomCode);
       
       if (io) {
+        console.log(`🎉 Emitting quiz-completed event to room ${roomCode} with ${finalResults.participants.length} participants`);
         io.to(roomCode).emit('quiz-completed', {
           results: finalResults,
           message: 'Quiz completed successfully'
         });
+        console.log(`🎉 Quiz-completed event emitted successfully`);
       }
       
       return null;
     }
 
     // Start next question
-    this.startQuestion(roomCode);
+    this.startQuestion(roomCode, io);
 
     const nextQuestion = this.getCurrentQuestion(roomCode);
     const leaderboard = this.getLeaderboard(roomCode);
@@ -240,10 +242,27 @@ class DoQuizService {
     // Check if answer is correct
     const isCorrect = answerIndex === currentQuestion.correctAnswerIndex;
     
+    console.log(`🔍 Answer check for room ${roomCode}:`, {
+      participantName: participant.name,
+      answerIndex: answerIndex,
+      correctAnswerIndex: currentQuestion.correctAnswerIndex,
+      isCorrect: isCorrect,
+      questionText: currentQuestion.questionText
+    });
+    
     // Update score
-    const currentScore = quizSession.results.scores.get(participantId) || 0;
+    const currentScore = quizSession.results.scores.get(participant.playerId) || 0;
     const newScore = isCorrect ? currentScore + 1 : currentScore;
-    quizSession.results.scores.set(participantId, newScore);
+    quizSession.results.scores.set(participant.playerId, newScore);
+    
+    console.log(`📊 Score updated for ${participant.name}:`, {
+      participantId: participantId,
+      playerId: participant.playerId,
+      currentScore: currentScore,
+      newScore: newScore,
+      isCorrect: isCorrect,
+      scoresMap: Array.from(quizSession.results.scores.entries())
+    });
 
     // Store answer
     const answerData = {
@@ -255,7 +274,7 @@ class DoQuizService {
     };
 
     participantAnswers.push(answerData);
-    quizSession.results.answers.set(participantId, participantAnswers);
+    quizSession.results.answers.set(participant.playerId, participantAnswers);
 
     console.log(`✅ Answer submitted by ${participant.name} in room ${roomCode}: ${answerIndex} (${isCorrect ? 'correct' : 'incorrect'}) in ${timeSpent}ms`);
 
@@ -329,19 +348,37 @@ class DoQuizService {
     quizSession.isCompleted = true;
     quizSession.results.completionTime = new Date();
 
-    // Calculate final leaderboard
-    const finalLeaderboard = this.getLeaderboard(roomCode);
+    // Calculate detailed results for each participant
+    const participants = Array.from(quizSession.participants.values()).map(participant => {
+      const score = quizSession.results.scores.get(participant.playerId) || 0;
+      const answers = quizSession.results.answers.get(participant.playerId) || [];
+      
+      console.log(`📊 Final score for ${participant.name}:`, {
+        playerId: participant.playerId,
+        score: score,
+        answers: answers.length,
+        totalQuestions: quizSession.totalQuestions
+      });
+      
+      return {
+        playerId: participant.playerId,
+        name: participant.name,
+        score: score,
+        totalQuestions: quizSession.totalQuestions,
+        answers: answers
+      };
+    });
 
     const finalResults = {
       roomCode: roomCode,
       quizTitle: quizSession.quizTitle,
       totalQuestions: quizSession.totalQuestions,
-      participants: finalLeaderboard,
+      participants: participants,
       completionTime: quizSession.results.completionTime,
       duration: Date.now() - quizSession.startTime.getTime()
     };
 
-    console.log(`🏁 Quiz completed for room ${roomCode}. Final leaderboard:`, finalLeaderboard);
+    console.log(`🏁 Quiz completed for room ${roomCode}. Final results:`, finalResults);
 
     // Clean up
     this.activeQuizzes.delete(roomCode);
