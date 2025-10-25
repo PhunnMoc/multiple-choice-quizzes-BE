@@ -75,9 +75,102 @@ const getQuizzesValidation = [
 ];
 
 /**
- * @route   POST /api/quizzes
- * @desc    Create a new quiz
- * @access  Private (authentication required)
+ * @swagger
+ * /api/quizzes:
+ *   post:
+ *     summary: Create a new quiz
+ *     tags: [Quizzes]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - questions
+ *             properties:
+ *               title:
+ *                 type: string
+ *                 maxLength: 200
+ *                 example: "Geography Quiz"
+ *               authorName:
+ *                 type: string
+ *                 maxLength: 100
+ *                 example: "John Doe"
+ *               questions:
+ *                 type: array
+ *                 minItems: 1
+ *                 items:
+ *                   type: object
+ *                   required:
+ *                     - questionText
+ *                     - options
+ *                     - correctAnswerIndex
+ *                   properties:
+ *                     questionText:
+ *                       type: string
+ *                       maxLength: 500
+ *                       example: "What is the capital of France?"
+ *                     options:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       minItems: 4
+ *                       maxItems: 4
+ *                       example: ["Paris", "London", "Berlin", "Madrid"]
+ *                     correctAnswerIndex:
+ *                       type: integer
+ *                       minimum: 0
+ *                       maximum: 3
+ *                       example: 0
+ *     responses:
+ *       201:
+ *         description: Quiz created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/Success'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         quiz:
+ *                           type: object
+ *                           properties:
+ *                             id:
+ *                               type: string
+ *                             title:
+ *                               type: string
+ *                             authorName:
+ *                               type: string
+ *                             questionsCount:
+ *                               type: integer
+ *                             createdAt:
+ *                               type: string
+ *                               format: date-time
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/', authenticateToken, createQuizValidation, validateRequest, quizController.createQuiz);
 

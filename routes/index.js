@@ -1,7 +1,6 @@
 const express = require('express');
 const quizRoutes = require('./quizRoutes');
 const authRoutes = require('./authRoutes');
-const quizHistoryRoutes = require('./quizHistoryRoutes');
 
 const router = express.Router();
 
@@ -25,9 +24,6 @@ router.use('/auth', authRoutes);
 
 // Quiz routes
 router.use('/quizzes', quizRoutes);
-
-// Quiz history routes
-router.use('/quiz-history', quizHistoryRoutes);
 
 // Future routes can be added here
 // router.use('/users', userRoutes);

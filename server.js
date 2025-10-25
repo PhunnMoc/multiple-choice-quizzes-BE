@@ -4,12 +4,14 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const swaggerUi = require('swagger-ui-express');
 
 const database = require('./config/database');
 const apiRoutes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/notFound');
 const socketService = require('./services/socketService');
+const swaggerSpecs = require('./config/swagger');
 
 /**
  * Express Application Setup
@@ -73,13 +75,21 @@ class Server {
         success: true,
         message: 'Welcome to Quiz Platform API',
         version: '1.0.0',
-        documentation: '/api/health',
+        documentation: '/api-docs',
         endpoints: {
           quizzes: '/api/quizzes',
-          health: '/api/health'
+          health: '/api/health',
+          auth: '/api/auth'
         }
       });
     });
+
+    // Swagger API Documentation
+    this.app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs, {
+      explorer: true,
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'Quiz Platform API Documentation'
+    }));
 
     // API routes
     this.app.use('/api', apiRoutes);

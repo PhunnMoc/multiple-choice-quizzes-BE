@@ -1,5 +1,4 @@
 const Quiz = require('../models/Quiz');
-const QuizHistory = require('../models/QuizHistory');
 
 /**
  * Do Quiz Service
@@ -115,7 +114,7 @@ class DoQuizService {
    * @param {object} io - Socket.io instance for emitting events
    * @returns {object} Next question data or null if quiz ended
    */
-  nextQuestion(roomCode, io = null) {
+  async nextQuestion(roomCode, io = null) {
     const quizSession = this.activeQuizzes.get(roomCode);
     if (!quizSession) {
       console.error(`Quiz session not found for room ${roomCode}`);
@@ -133,7 +132,8 @@ class DoQuizService {
 
     if (quizSession.currentQuestionIndex >= quizSession.totalQuestions) {
       // Quiz completed
-      const finalResults = this.endQuiz(roomCode);
+      console.log(`🏁 Quiz completed! Calling endQuiz for room ${roomCode}`);
+      const finalResults = await this.endQuiz(roomCode);
       
       if (io) {
         io.to(roomCode).emit('quiz-completed', {
@@ -251,8 +251,28 @@ class DoQuizService {
       hasExistingAnswer: !!existingAnswer
     });
     
+    // If user already answered this question, update the existing answer instead of throwing error
     if (existingAnswer) {
-      throw new Error('Already answered this question');
+      console.log('📝 Updating existing answer for', participant.name, ':', {
+        questionIndex: quizSession.currentQuestionIndex,
+        oldAnswer: existingAnswer.answerIndex,
+        newAnswer: answerIndex,
+        wasCorrect: existingAnswer.isCorrect,
+        willBeCorrect: answerIndex === currentQuestion.correctAnswerIndex
+      });
+      
+      // Remove the old answer from the array
+      const answerIndexToRemove = participantAnswers.findIndex(a => a.questionIndex === quizSession.currentQuestionIndex);
+      if (answerIndexToRemove !== -1) {
+        participantAnswers.splice(answerIndexToRemove, 1);
+      }
+      
+      // Update the score by removing the old score and adding the new one
+      const currentScore = quizSession.results.scores.get(participant.playerId) || 0;
+      const oldScoreContribution = existingAnswer.isCorrect ? 1 : 0;
+      const newScoreContribution = (answerIndex === currentQuestion.correctAnswerIndex) ? 1 : 0;
+      const updatedScore = currentScore - oldScoreContribution + newScoreContribution;
+      quizSession.results.scores.set(participant.playerId, updatedScore);
     }
 
     // Calculate time spent
@@ -261,10 +281,16 @@ class DoQuizService {
     // Check if answer is correct
     const isCorrect = answerIndex === currentQuestion.correctAnswerIndex;
     
-    // Update score
-    const currentScore = quizSession.results.scores.get(participant.playerId) || 0;
-    const newScore = isCorrect ? currentScore + 1 : currentScore;
-    quizSession.results.scores.set(participant.playerId, newScore);
+    // Update score (only if this is a new answer, not an update)
+    let newScore = 0;
+    if (!existingAnswer) {
+      const currentScore = quizSession.results.scores.get(participant.playerId) || 0;
+      newScore = isCorrect ? currentScore + 1 : currentScore;
+      quizSession.results.scores.set(participant.playerId, newScore);
+    } else {
+      // For existing answers, get the updated score from the map
+      newScore = quizSession.results.scores.get(participant.playerId) || 0;
+    }
 
     // Store answer
     const answerData = {
@@ -341,7 +367,7 @@ class DoQuizService {
    * @param {string} roomCode - Room code
    * @returns {object} Final results
    */
-  endQuiz(roomCode) {
+  async endQuiz(roomCode) {
     const quizSession = this.activeQuizzes.get(roomCode);
     if (!quizSession) {
       console.error(`Quiz session not found for room ${roomCode}`);
@@ -388,43 +414,18 @@ class DoQuizService {
     };
 
     // Save to history
-    this.saveQuizHistory(finalResults, quizSession);
-
+    console.log(`📚 About to save quiz history for room ${roomCode}`);
+    console.log(`📚 Final results:`, {
+      roomCode: finalResults.roomCode,
+      quizTitle: finalResults.quizTitle,
+      participantsCount: finalResults.participants.length,
+      questionsCount: finalResults.questions.length
+    });
+    
     // Clean up
     this.activeQuizzes.delete(roomCode);
 
     return finalResults;
-  }
-
-  /**
-   * Save quiz results to history
-   * @param {object} finalResults - Final quiz results
-   * @param {object} quizSession - Quiz session data
-   */
-  async saveQuizHistory(finalResults, quizSession) {
-    try {
-      // Find host (first participant)
-      const hostParticipant = Array.from(quizSession.participants.values())[0];
-      
-      const historyData = {
-        roomCode: finalResults.roomCode,
-        quizId: quizSession.quizId,
-        quizTitle: finalResults.quizTitle,
-        hostId: hostParticipant.playerId,
-        hostName: hostParticipant.name,
-        participants: finalResults.participants,
-        questions: finalResults.questions,
-        completionTime: finalResults.completionTime,
-        duration: finalResults.duration
-      };
-
-      const history = new QuizHistory(historyData);
-      await history.save();
-      
-      console.log(`📚 Quiz history saved for room ${finalResults.roomCode}`);
-    } catch (error) {
-      console.error('Error saving quiz history:', error);
-    }
   }
 
   /**
@@ -497,13 +498,6 @@ class DoQuizService {
     return quizSession ? quizSession.isActive : false;
   }
 
-  /**
-   * Get all active quiz sessions (for debugging)
-   * @returns {Array} List of active quiz sessions
-   */
-  getActiveQuizSessions() {
-    return Array.from(this.activeQuizzes.keys());
-  }
 }
 
 module.exports = new DoQuizService();
