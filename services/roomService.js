@@ -461,6 +461,43 @@ class RoomService {
   }
 
   /**
+   * Check if a socket is the host of a room
+   * @param {string} roomCode - Room code
+   * @param {string} socketId - Socket ID
+   * @returns {boolean} True if socket is host
+   */
+  isHost(roomCode, socketId) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return false;
+    
+    // Find participant with this socketId
+    const participant = room.participants.get(socketId);
+    if (!participant) return false;
+    
+    // The host is the participant with the smallest joinedAt timestamp
+    // or the first participant in the Map (since Map maintains insertion order)
+    const participants = Array.from(room.participants.entries());
+    if (participants.length === 0) return false;
+    
+    // Get the first participant (host)
+    const [firstSocketId, firstParticipant] = participants[0];
+    return socketId === firstSocketId;
+  }
+
+  /**
+   * Cancel a room (host left)
+   * @param {string} roomCode - Room code
+   */
+  cancelRoom(roomCode) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return;
+    
+    this.clearQuestionTimer(roomCode);
+    this.rooms.delete(roomCode);
+    console.log(`Room ${roomCode} cancelled by host`);
+  }
+
+  /**
    * Delete a room
    * @param {string} roomCode - Room code
    */
@@ -468,6 +505,29 @@ class RoomService {
     this.clearQuestionTimer(roomCode);
     this.rooms.delete(roomCode);
     console.log(`Room ${roomCode} deleted`);
+  }
+
+  /**
+   * Check if a participant is the host of a room
+   * @param {string} roomCode - Room code
+   * @param {string} socketId - Socket ID to check
+   * @returns {boolean} True if the participant is the host
+   */
+  isHost(roomCode, socketId) {
+    const room = this.rooms.get(roomCode);
+    if (!room) return false;
+
+    const participant = room.participants.get(socketId);
+    if (!participant) return false;
+
+    // The host is the participant with the smallest joinedAt timestamp
+    // or the first participant in the Map (since Map maintains insertion order)
+    const participants = Array.from(room.participants.entries());
+    if (participants.length === 0) return false;
+
+    // Get the first participant (host)
+    const [firstSocketId, firstParticipant] = participants[0];
+    return socketId === firstSocketId;
   }
 
   /**

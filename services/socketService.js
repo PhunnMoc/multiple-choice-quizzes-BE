@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const roomService = require('./roomService');
+const doQuizService = require('./doQuizzService');
 
 /**
  * Socket.io Service
@@ -90,10 +91,35 @@ class SocketService {
           }
 
           const roomCode = await roomService.createRoom(quizId, socket.user.id);
+          const room = roomService.getRoom(roomCode);
+          
+          // Join socket room for broadcasting
+          socket.join(roomCode);
+          
+          // Store room code in socket for cleanup
+          socket.roomCode = roomCode;
+
+          // Ensure host is the first participant
+          try {
+            roomService.joinRoom(roomCode, socket.id, socket.user.name || 'Host');
+          } catch (e) {
+            // If already joined or any benign error, ignore
+          }
+          
+          // Get participants list (now includes host)
+          const participantsList = Array.from(room.participants.values()).map(p => ({
+            playerId: p.playerId,
+            name: p.name,
+            score: p.score,
+            isConnected: true,
+            isReady: p.isReady || false
+          }));
           
           socket.emit('room-created', {
             roomCode,
-            message: 'Room created successfully'
+            message: 'Room created successfully',
+            participantCount: room.participants.size,
+            participants: participantsList
           });
 
           console.log(`Room ${roomCode} created by ${socket.user.name}`);
@@ -121,20 +147,32 @@ class SocketService {
           socket.roomCode = roomCode;
 
           const participant = room.participants.get(socket.id);
+          
+          // Get all participants info
+          const participantsList = Array.from(room.participants.values()).map(p => ({
+            playerId: p.playerId,
+            name: p.name,
+            score: p.score,
+            isConnected: true,
+            isReady: p.isReady || false
+          }));
+          
           socket.emit('room-joined', {
             roomCode,
             message: 'Successfully joined room',
             quizTitle: room.quizData.title,
             participantCount: room.participants.size,
+            participants: participantsList,
             playerId: participant.playerId,
             gameSessionId: room.gameSessionId
           });
 
-          // Notify other participants
-          socket.to(roomCode).emit('participant-joined', {
+          // Notify all participants (including host)
+          this.io.to(roomCode).emit('participant-joined', {
             name,
             playerId: participant.playerId,
-            participantCount: room.participants.size
+            participantCount: room.participants.size,
+            participants: participantsList
           });
 
           console.log(`${name} joined room ${roomCode}`);
@@ -156,21 +194,39 @@ class SocketService {
             return socket.emit('error', { message: 'Room code is required' });
           }
 
-          const room = roomService.startQuiz(roomCode, socket.user.id);
-          const question = roomService.getCurrentQuestion(roomCode);
+          // Get room data
+          const room = roomService.getRoom(roomCode);
+          if (!room) {
+            return socket.emit('error', { message: 'Room not found' });
+          }
 
-          // Get initial leaderboard
-          const leaderboard = roomService.getLeaderboard(roomCode);
+          // Check if user is host
+          const isHost = roomService.isHost(roomCode, socket.id);
+          if (!isHost) {
+            return socket.emit('error', { message: 'Only the host can start the quiz' });
+          }
+
+          // Start quiz using doQuizService
+          const quizSession = doQuizService.startQuiz(roomCode, room.quizData, room.participants, this.io);
+          const currentQuestion = doQuizService.getCurrentQuestion(roomCode);
+          const leaderboard = doQuizService.getLeaderboard(roomCode);
+
+          console.log(`🎮 Quiz session created:`, {
+            roomCode,
+            quizSession: quizSession ? 'created' : 'null',
+            currentQuestion: currentQuestion ? 'exists' : 'null',
+            leaderboard: leaderboard ? leaderboard.length : 0
+          });
 
           // Broadcast to all participants in the room
           this.io.to(roomCode).emit('quiz-started', {
-            question,
+            question: currentQuestion,
             participantCount: room.participants.size,
             gameSessionId: room.gameSessionId,
-            leaderboard
+            leaderboard: leaderboard
           });
 
-          console.log(`Quiz started in room ${roomCode} by ${socket.user.name}`);
+          console.log(`🎮 Quiz started in room ${roomCode} by ${socket.user.name} - event emitted to ${room.participants.size} participants`);
         } catch (error) {
           console.error('Error starting quiz:', error);
           socket.emit('error', { message: error.message });
@@ -180,59 +236,81 @@ class SocketService {
       // Submit answer event
       socket.on('submit-answer', async (data) => {
         try {
-          const { roomCode, answer, clientTimeTaken } = data;
+          const { roomCode, answer } = data;
           
           if (!roomCode || answer === undefined) {
             return socket.emit('error', { message: 'Room code and answer are required' });
           }
 
-          const result = roomService.submitAnswer(roomCode, socket.id, answer, clientTimeTaken);
-          const room = roomService.getRoom(roomCode);
-          const participant = room.participants.get(socket.id);
+          // Check if quiz is active
+          if (!doQuizService.isQuizActive(roomCode)) {
+            return socket.emit('error', { message: 'Quiz is not active' });
+          }
 
+          // Submit answer using doQuizService
+          const result = doQuizService.submitAnswer(roomCode, socket.id, answer);
+          const leaderboard = doQuizService.getLeaderboard(roomCode);
+
+          // Send result to participant
           socket.emit('answer-submitted', {
             isCorrect: result.isCorrect,
             timeSpent: result.timeSpent,
-            serverTimeSpent: result.serverTimeSpent,
             currentScore: result.currentScore,
-            playerId: result.playerId
+            participantId: result.participantId,
+            participantName: result.participantName
           });
 
           // Broadcast updated leaderboard to all participants
-          const leaderboard = roomService.getLeaderboard(roomCode);
-          this.io.to(roomCode).emit('leaderboard-updated', leaderboard);
+          this.io.to(roomCode).emit('leaderboard-updated', {
+            leaderboard: leaderboard,
+            participantCount: leaderboard.length
+          });
 
-          // Check if all participants have answered
-          const allAnswered = Array.from(room.participants.values())
-            .every(p => p.answers.some(a => a.questionIndex === room.currentQuestion));
-
-          if (allAnswered) {
-            // Auto-advance to next question
-            setTimeout(() => {
-              this.advanceToNextQuestion(roomCode, socket.user?.id);
-            }, 2000); // Wait 2 seconds to show results
-          }
-
-          console.log(`Answer submitted in room ${roomCode}: ${answer}`);
+          console.log(`✅ Answer submitted in room ${roomCode} by ${result.participantName}: ${answer} (${result.isCorrect ? 'correct' : 'incorrect'})`);
         } catch (error) {
           console.error('Error submitting answer:', error);
           socket.emit('error', { message: error.message });
         }
       });
 
-      // Next question event (host only)
+      // Next question event (automatic after timer)
       socket.on('next-quiz', async (data) => {
         try {
-          if (!socket.user) {
-            return socket.emit('error', { message: 'Authentication required' });
-          }
-
           const { roomCode } = data;
           if (!roomCode) {
             return socket.emit('error', { message: 'Room code is required' });
           }
 
-          this.advanceToNextQuestion(roomCode, socket.user.id);
+          // Check if quiz is active
+          if (!doQuizService.isQuizActive(roomCode)) {
+            return socket.emit('error', { message: 'Quiz is not active' });
+          }
+
+          // Move to next question
+          const nextQuestion = doQuizService.nextQuestion(roomCode);
+          
+          if (!nextQuestion) {
+            // Quiz completed
+            const finalResults = doQuizService.endQuiz(roomCode);
+            
+            this.io.to(roomCode).emit('quiz-completed', {
+              results: finalResults,
+              message: 'Quiz completed successfully'
+            });
+
+            console.log(`🏁 Quiz completed for room ${roomCode}`);
+          } else {
+            // Next question
+            const leaderboard = doQuizService.getLeaderboard(roomCode);
+            
+            this.io.to(roomCode).emit('next-question', {
+              question: nextQuestion,
+              participantCount: leaderboard.length,
+              leaderboard: leaderboard
+            });
+
+            console.log(`📝 Question ${nextQuestion.questionIndex + 1} started for room ${roomCode}`);
+          }
         } catch (error) {
           console.error('Error advancing question:', error);
           socket.emit('error', { message: error.message });
@@ -242,20 +320,62 @@ class SocketService {
       // Get leaderboard event
       socket.on('get-leaderboard', async (data) => {
         try {
-          const { roomCode, currentQuestionOnly = false } = data;
+          const { roomCode } = data;
           
           if (!roomCode) {
             return socket.emit('error', { message: 'Room code is required' });
           }
 
-          const leaderboard = roomService.getLeaderboard(roomCode, currentQuestionOnly);
+          const leaderboard = doQuizService.getLeaderboard(roomCode);
           if (!leaderboard) {
             return socket.emit('error', { message: 'Room not found' });
           }
 
-          socket.emit('leaderboard-data', leaderboard);
+          socket.emit('leaderboard-data', {
+            leaderboard: leaderboard,
+            participantCount: leaderboard.length
+          });
         } catch (error) {
           console.error('Error getting leaderboard:', error);
+          socket.emit('error', { message: error.message });
+        }
+      });
+
+      // Check room status event
+      socket.on('check-room-status', (data) => {
+        try {
+          const { roomCode } = data;
+          if (!roomCode) {
+            return socket.emit('error', { message: 'Room code is required' });
+          }
+
+          const room = roomService.getRoom(roomCode);
+          if (!room) {
+            // Room doesn't exist - notify client
+            socket.emit('room-cancelled', {
+              message: 'The quiz room has been cancelled.',
+              roomCode: roomCode
+            });
+            return;
+          }
+
+          // Room exists - send current status
+          const participantsList = Array.from(room.participants.values()).map(p => ({
+            playerId: p.playerId,
+            name: p.name,
+            score: p.score,
+            isConnected: true,
+            isReady: p.isReady || false
+          }));
+
+          socket.emit('room-status', {
+            roomCode,
+            participantCount: room.participants.size,
+            participants: participantsList,
+            isActive: room.isActive
+          });
+        } catch (error) {
+          console.error('Error checking room status:', error);
           socket.emit('error', { message: error.message });
         }
       });
@@ -269,14 +389,46 @@ class SocketService {
           if (room) {
             const participant = room.participants.get(socket.id);
             if (participant) {
-              // Notify other participants
-              socket.to(socket.roomCode).emit('participant-left', {
-                name: participant.name,
-                participantCount: room.participants.size - 1
-              });
+              // Check if the disconnecting user is the host
+              const isHost = roomService.isHost(socket.roomCode, socket.id);
+              
+              if (isHost) {
+                // Host left - cancel the room and notify all participants
+                console.log(`Host ${participant.name} left room ${socket.roomCode} - cancelling room`);
+                
+                // Store room code before cancelling
+                const roomCodeToCancel = socket.roomCode;
+                
+                // Notify all participants that room is cancelled BEFORE cancelling the room
+                this.io.to(roomCodeToCancel).emit('room-cancelled', {
+                  message: 'Host has left the room. The quiz has been cancelled.',
+                  roomCode: roomCodeToCancel
+                });
+                
+                // Cancel the room AFTER sending the event
+                roomService.cancelRoom(roomCodeToCancel);
+              } else {
+                // Regular participant left - just notify others
+                const updatedParticipantsList = Array.from(room.participants.values())
+                  .filter(p => p.playerId !== participant.playerId)
+                  .map(p => ({
+                    playerId: p.playerId,
+                    name: p.name,
+                    score: p.score,
+                    isConnected: true,
+                    isReady: p.isReady || false
+                  }));
+                
+                // Notify all participants (including host)
+                this.io.to(socket.roomCode).emit('participant-left', {
+                  name: participant.name,
+                  participantCount: room.participants.size - 1,
+                  participants: updatedParticipantsList
+                });
+                
+                roomService.leaveRoom(socket.roomCode, socket.id);
+              }
             }
-            
-            roomService.leaveRoom(socket.roomCode, socket.id);
           }
         }
       });
